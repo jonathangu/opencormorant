@@ -12,6 +12,7 @@ import {
   resolveOutboundTarget,
   resolveSessionDeliveryTarget,
 } from "../../infra/outbound/targets.js";
+import { buildChannelAccountBindings } from "../../routing/bindings.js";
 
 export async function resolveDeliveryTarget(
   cfg: OpenClawConfig,
@@ -70,6 +71,22 @@ export async function resolveDeliveryTarget(
   const mode = resolved.mode as "explicit" | "implicit";
   const toCandidate = resolved.to;
 
+  // When the session has no accountId (e.g. isolated cron sessions with no
+  // prior conversation history), fall back to the agent's channel binding from
+  // config. This ensures cron jobs for agent "pelican" deliver through the
+  // pelican Telegram account, not the default account.
+  let accountId = resolved.accountId;
+  if (!accountId && channel) {
+    const bindings = buildChannelAccountBindings(cfg);
+    const byAgent = bindings.get(channel);
+    if (byAgent) {
+      const boundAccounts = byAgent.get(agentId);
+      if (boundAccounts && boundAccounts.length > 0) {
+        accountId = boundAccounts[0];
+      }
+    }
+  }
+
   // Only carry threadId when delivering to the same recipient as the session's
   // last conversation. This prevents stale thread IDs (e.g. from a Telegram
   // supergroup topic) from being sent to a different target (e.g. a private
@@ -83,7 +100,7 @@ export async function resolveDeliveryTarget(
     return {
       channel,
       to: undefined,
-      accountId: resolved.accountId,
+      accountId,
       threadId,
       mode,
     };
@@ -93,13 +110,13 @@ export async function resolveDeliveryTarget(
     channel,
     to: toCandidate,
     cfg,
-    accountId: resolved.accountId,
+    accountId,
     mode,
   });
   return {
     channel,
     to: docked.ok ? docked.to : undefined,
-    accountId: resolved.accountId,
+    accountId,
     threadId,
     mode,
     error: docked.ok ? undefined : docked.error,
